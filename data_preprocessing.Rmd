@@ -112,7 +112,6 @@ head(merged_data)
 
 
 ```
-
 ```{r}
 ########################################################################################################
 # AGGREGATE DATA FOR SPECIFIC QUESTIONS
@@ -120,17 +119,14 @@ head(merged_data)
 
 # Q1: How does life expectancy vary across countries and regions with different healthcare expenditure levels?
 q1_data <- merged_data %>%
-  group_by(country, status) %>%
+  group_by(country, status) %>% # Group by country and region (status)
   summarise(
     avg_life_exp = mean(life_expectancy, na.rm = TRUE),
-    avg_health_exp = mean(percentage_expenditure, na.rm = TRUE),
-    avg_gdp = mean(gdp, na.rm = TRUE),
-    avg_population = mean(population, na.rm = TRUE)
-  )
-```
+    avg_health_exp = mean(percentage_expenditure, na.rm = TRUE)
+  ) %>%
+  mutate(corr_health_exp_life_exp = cor(avg_health_exp, avg_life_exp, use = "complete.obs")) # Correlation for exploration
 
-```{r}
-# Q2: What is the impact of common diseases (e.g., cardiovascular diseases, HIV/AIDS, and neonatal disorders) on the life expectancy trends in different countries?
+# Q2: What is the impact of common diseases (e.g., cardiovascular diseases, HIV/AIDS, and neonatal disorders) on life expectancy trends in different countries?
 q2_data <- merged_data %>%
   group_by(country) %>% # Group by country
   summarise(
@@ -138,135 +134,60 @@ q2_data <- merged_data %>%
     avg_cardio_deaths = mean(cardiovascular_diseases, na.rm = TRUE),
     avg_neonatal_deaths = mean(neonatal_disorders, na.rm = TRUE),
     avg_hiv_deaths = mean(hiv_aids_cause_deaths, na.rm = TRUE)
+  ) %>%
+  mutate(
+    corr_cardio_life_exp = cor(avg_cardio_deaths, avg_life_exp, use = "complete.obs"),
+    corr_neonatal_life_exp = cor(avg_neonatal_deaths, avg_life_exp, use = "complete.obs"),
+    corr_hiv_life_exp = cor(avg_hiv_deaths, avg_life_exp, use = "complete.obs")
   )
-
-# Optionally, calculate correlation coefficients between diseases and life expectancy for each country
-q2_correlations <- merged_data %>%
-  group_by(country) %>%
-  summarise(
-    corr_cardio_life_exp = cor(cardiovascular_diseases, life_expectancy, use = "complete.obs"),
-    corr_neonatal_life_exp = cor(neonatal_disorders, life_expectancy, use = "complete.obs"),
-    corr_hiv_life_exp = cor(hiv_aids_cause_deaths, life_expectancy, use = "complete.obs")
-  )
-
-# Merge average deaths and correlations into one dataset for better insights
-q2_data <- q2_data %>%
-  left_join(q2_correlations, by = "country")
-```
-
-
-```{r}
 
 # Q3: How do infant mortality and under-five mortality correlate with immunisation coverage (e.g., Hepatitis B, Polio, and Measles)?
 q3_data <- merged_data %>%
-  group_by(country) %>%
+  group_by(country) %>% # Group by country
   summarise(
     avg_infant_mortality = mean(infant_deaths, na.rm = TRUE),
     avg_under_five_mortality = mean(under_five_deaths, na.rm = TRUE),
     avg_immunisation = mean((hepatitis_b + polio + measles) / 3, na.rm = TRUE)
+  ) %>%
+  mutate(
+    corr_immunisation_infant_mortality = cor(avg_immunisation, avg_infant_mortality, use = "complete.obs"),
+    corr_immunisation_under_five_mortality = cor(avg_immunisation, avg_under_five_mortality, use = "complete.obs")
   )
-```
 
-```{r}
-
-# Q4: How do higher death rates from diseases such as malaria, tuberculosis, diarrheal diseases, and other major health challenges in developing countries influence life expectancy compared to developed nations?
+# Q4: How do schooling levels and disease mortality rates (e.g., malaria, tuberculosis, and diarrheal diseases) collectively influence life expectancy in developing and developed nations?
 q4_data <- merged_data %>%
-  group_by(status) %>% # Group by Developing vs. Developed
+  group_by(status, country) %>% # Group by development status and country
   summarise(
     avg_life_exp = mean(life_expectancy, na.rm = TRUE),
+    avg_schooling = mean(schooling, na.rm = TRUE),
     avg_malaria_deaths = mean(malaria, na.rm = TRUE),
     avg_tb_deaths = mean(tuberculosis, na.rm = TRUE),
-    avg_diarrheal_deaths = mean(diarrheal_diseases, na.rm = TRUE),
-    avg_respiratory_infections = mean(lower_respiratory_infections, na.rm = TRUE),
-    avg_neonatal_deaths = mean(neonatal_disorders, na.rm = TRUE),
-    avg_population = mean(population, na.rm = TRUE),
-    avg_gdp = mean(gdp, na.rm = TRUE) 
+    avg_diarrheal_deaths = mean(diarrheal_diseases, na.rm = TRUE)
+  ) %>%
+  mutate(
+    corr_schooling_life_exp = cor(avg_schooling, avg_life_exp, use = "complete.obs"),
+    corr_schooling_disease_mortality = cor(avg_schooling, avg_malaria_deaths + avg_tb_deaths + avg_diarrheal_deaths, use = "complete.obs")
   )
-```
 
-```{r}
-# Q5: Relationship between schooling levels and life expectancy in countries with high disease mortality rates
+# Q5: How have life expectancy and disease mortality rates changed over time in different countries and regions?
 q5_data <- merged_data %>%
-  filter(
-    cardiovascular_diseases > quantile(cardiovascular_diseases, 0.75, na.rm = TRUE) |
-    malaria > quantile(malaria, 0.75, na.rm = TRUE)
-  ) %>%
-  group_by(country) %>% # Group by country
+  group_by(country, year) %>% # Group by country and year
   summarise(
-    avg_schooling = mean(schooling, na.rm = TRUE),
     avg_life_exp = mean(life_expectancy, na.rm = TRUE),
-    avg_gdp = mean(gdp, na.rm = TRUE),
-    avg_cardio_deaths = mean(cardiovascular_diseases, na.rm = TRUE), # Add context: average cardio deaths
-    avg_malaria_deaths = mean(malaria, na.rm = TRUE) # Add context: average malaria deaths
+    avg_cardio_deaths = mean(cardiovascular_diseases, na.rm = TRUE),
+    avg_malaria_deaths = mean(malaria, na.rm = TRUE),
+    avg_tb_deaths = mean(tuberculosis, na.rm = TRUE)
   ) %>%
-  arrange(desc(avg_cardio_deaths)) # Optionally sort by highest disease mortality
+  arrange(year) # Sort by year for time-based trends
 
-```
-
-```{r}
-# Proportions of Causes of Deaths
-proportions_data <- merged_data %>%
-  mutate(total_deaths = cardiovascular_diseases + neonatal_disorders + 
-                        hiv_aids_cause_deaths + malaria + tuberculosis, # Sum of all considered causes
-         cardio_death_prop = cardiovascular_diseases / total_deaths,
-         neonatal_death_prop = neonatal_disorders / total_deaths,
-         hiv_death_prop = hiv_aids_cause_deaths / total_deaths,
-         malaria_death_prop = malaria / total_deaths,
-         tb_death_prop = tuberculosis / total_deaths) 
-```
-
-```{r}
 # Save the cleaned and aggregated datasets for further visualization
 write.csv(merged_data, "cleaned_merged_data.csv", row.names = FALSE)
 write.csv(q1_data, "q1_healthcare_vs_life_expectancy.csv", row.names = FALSE)
 write.csv(q2_data, "q2_disease_impact_by_country.csv", row.names = FALSE)
 write.csv(q3_data, "q3_child_mortality_vs_immunisation.csv", row.names = FALSE)
-write.csv(q4_data, "q4_disease_mortality_in_developing.csv", row.names = FALSE)
-write.csv(q5_data, "q5_schooling_vs_life_expectancy.csv", row.names = FALSE)
-write.csv(proportions_data, "proportions_of_causes_of_deaths.csv", row.names = FALSE)
-```
-
-
-```{r}
-##############################################################################################################
-# BASIC ANALYSIS AND VISUALIZATION: PROPORTIONS OF CAUSES OF DEATHS
-##############################################################################################################
-
-# Load required libraries
-library(ggplot2)
-library(dplyr)
-library(tidyr)
-
-# Summarize total deaths by cause
-proportions_summary <- proportions_data %>%
-  summarise(
-    total_cardio_deaths = sum(cardio_death_prop * total_deaths, na.rm = TRUE),
-    total_neonatal_deaths = sum(neonatal_death_prop * total_deaths, na.rm = TRUE),
-    total_hiv_deaths = sum(hiv_death_prop * total_deaths, na.rm = TRUE),
-    total_malaria_deaths = sum(malaria_death_prop * total_deaths, na.rm = TRUE),
-    total_tb_deaths = sum(tb_death_prop * total_deaths, na.rm = TRUE)
-  )
-
-# Reshape data for visualization
-proportions_long <- proportions_summary %>%
-  pivot_longer(cols = everything(), names_to = "cause", values_to = "total_deaths") %>%
-  mutate(cause = gsub("_deaths", "", cause)) # Clean cause names
-
-# Create pie chart
-ggplot(proportions_long, aes(x = "", y = total_deaths, fill = cause)) +
-  geom_bar(stat = "identity", width = 1, color = "white") +
-  coord_polar(theta = "y") +
-  theme_minimal() +
-  labs(
-    title = "Proportions of Causes of Deaths",
-    fill = "Cause of Death"
-  ) +
-  theme(
-    axis.text = element_blank(),
-    axis.ticks = element_blank(),
-    panel.grid = element_blank()
-  ) +
-  scale_fill_brewer(palette = "Set3")
+write.csv(q4_data, "q4_schooling_disease_mortality.csv", row.names = FALSE)
+write.csv(q5_data, "q5_temporal_trends_life_expectancy.csv", row.names = FALSE)
 
 ```
+
 
