@@ -26,6 +26,7 @@ cause_of_deaths <- read.csv(cause_of_deaths_path, header = TRUE, sep = ",")
 head(life_expectancy)
 head(cause_of_deaths)
 
+
 ```
 
 ```{r}
@@ -53,7 +54,6 @@ sapply(life_expectancy, function(x) sum(is.na(x)))
 message("\nMissing Values in Cause of Deaths Data:\n")
 sapply(cause_of_deaths, function(x) sum(is.na(x)))
 
-
 # Data Types 
 message("\nData Types in Life Expectancy Data:\n")
 sapply(life_expectancy, class)
@@ -63,131 +63,83 @@ sapply(cause_of_deaths, class)
 ```
 
 ```{r}
+
 ########################################################################################################
-# DATA CLEANING AND AGGREGATION
+# DATA CLEANING, MERGING, AND ANALYSIS
 ########################################################################################################
 
-# Clean column names in both datasets
-# Remove spaces and convert names to lowercase with underscores
+# Clean column names for consistency
+library(dplyr)
+library(janitor)
+
 life_expectancy <- life_expectancy %>%
   clean_names()
 cause_of_deaths <- cause_of_deaths %>%
   clean_names()
 
-# Subset relevant columns from Life Expectancy data
-life_exp_clean <- life_expectancy %>%
+# Filter for overlapping years (2000-2015)
+life_exp_filtered <- life_expectancy %>%
+  filter(year >= 2000 & year <= 2015)
+
+cause_of_deaths_filtered <- cause_of_deaths %>%
+  filter(year >= 2000 & year <= 2015)
+
+# Subset and clean relevant columns
+life_exp_clean <- life_exp_filtered %>%
   select(country, year, status, life_expectancy, adult_mortality, 
          percentage_expenditure, hepatitis_b, polio, measles, 
          infant_deaths, under_five_deaths, hiv_aids, schooling, 
-         population, alcohol, gdp) # Include Population, Alcohol, and GDP
+         population, alcohol, gdp)
 
-# Subset relevant columns from Cause of Deaths data
-cause_of_deaths_clean <- cause_of_deaths %>%
+cause_of_deaths_clean <- cause_of_deaths_filtered %>%
   select(country_territory, year, cardiovascular_diseases, neonatal_disorders, 
-         hiv_aids, malaria, tuberculosis, diarrheal_diseases, 
-         lower_respiratory_infections) # Include Lower Respiratory Infections
-
-# Rename columns for consistency
-cause_of_deaths_clean <- cause_of_deaths_clean %>%
+         hiv_aids, malaria, tuberculosis, diarrheal_diseases, lower_respiratory_infections) %>%
   rename(country = country_territory)
 
-# Filter for overlapping years (2000-2015) to ensure data is relevant
-life_exp_filtered <- life_exp_clean %>%
-  filter(year >= 2000 & year <= 2015)
-
-cause_of_deaths_filtered <- cause_of_deaths_clean %>%
-  filter(year >= 2000 & year <= 2015)
-
-# Merge datasets and resolve duplicate columns
-merged_data <- life_exp_filtered %>%
-  inner_join(cause_of_deaths_filtered, by = c("country", "year")) %>%
+# Merge datasets by matching country and year
+merged_data <- life_exp_clean %>%
+  inner_join(cause_of_deaths_clean, by = c("country", "year")) %>%
   rename(hiv_aids_life_exp = hiv_aids.x,
          hiv_aids_cause_deaths = hiv_aids.y)
 
-# Add derived features
+# Handle missing values in merged data
 merged_data <- merged_data %>%
-  mutate(healthcare_per_capita = percentage_expenditure / life_expectancy)
+  mutate(
+    healthcare_per_capita = percentage_expenditure / life_expectancy,
+    hiv_aids_life_exp = ifelse(is.na(hiv_aids_life_exp), 0, hiv_aids_life_exp),
+    hiv_aids_cause_deaths = ifelse(is.na(hiv_aids_cause_deaths), 0, hiv_aids_cause_deaths)
+  )
 
-head(merged_data)
-
+# Save the merged dataset for later use
+write.csv(merged_data, "cleaned_merged_data.csv", row.names = FALSE)
 
 ```
+
 ```{r}
 ########################################################################################################
-# AGGREGATE DATA FOR SPECIFIC QUESTIONS
+# DATA ANALYSIS FOR QUESTIONS
+########################################################################################################
+# Q1: Life Expectancy and Healthcare Expenditure
 ########################################################################################################
 
-# Q1: How does life expectancy vary across countries and regions with different healthcare expenditure levels?
+# Summarise data by country and development status
 q1_data <- merged_data %>%
-  group_by(country, status) %>% # Group by country and region (status)
+  group_by(country, status) %>%
   summarise(
-    avg_life_exp = mean(life_expectancy, na.rm = TRUE),
-    avg_health_exp = mean(percentage_expenditure, na.rm = TRUE)
+    avg_life_exp = mean(life_expectancy, na.rm = TRUE),  # Average life expectancy
+    avg_health_exp = mean(percentage_expenditure, na.rm = TRUE),  # Average healthcare expenditure
+    corr_health_exp_life_exp = ifelse(
+      var(percentage_expenditure) == 0 | var(life_expectancy) == 0, 
+      NA,  # Avoid calculation when variance is zero
+      cor(percentage_expenditure, life_expectancy, use = "complete.obs")  # Correlation
+    )
   ) %>%
-  mutate(corr_health_exp_life_exp = cor(avg_health_exp, avg_life_exp, use = "complete.obs")) # Correlation for exploration
+  arrange(desc(avg_life_exp))  # Arrange by descending life expectancy for readability
 
-# Q2: What is the impact of common diseases (e.g., cardiovascular diseases, HIV/AIDS, and neonatal disorders) on life expectancy trends in different countries?
-q2_data <- merged_data %>%
-  group_by(country) %>% # Group by country
-  summarise(
-    avg_life_exp = mean(life_expectancy, na.rm = TRUE),
-    avg_cardio_deaths = mean(cardiovascular_diseases, na.rm = TRUE),
-    avg_neonatal_deaths = mean(neonatal_disorders, na.rm = TRUE),
-    avg_hiv_deaths = mean(hiv_aids_cause_deaths, na.rm = TRUE)
-  ) %>%
-  mutate(
-    corr_cardio_life_exp = cor(avg_cardio_deaths, avg_life_exp, use = "complete.obs"),
-    corr_neonatal_life_exp = cor(avg_neonatal_deaths, avg_life_exp, use = "complete.obs"),
-    corr_hiv_life_exp = cor(avg_hiv_deaths, avg_life_exp, use = "complete.obs")
-  )
-
-# Q3: How do infant mortality and under-five mortality correlate with immunisation coverage (e.g., Hepatitis B, Polio, and Measles)?
-q3_data <- merged_data %>%
-  group_by(country) %>% # Group by country
-  summarise(
-    avg_infant_mortality = mean(infant_deaths, na.rm = TRUE),
-    avg_under_five_mortality = mean(under_five_deaths, na.rm = TRUE),
-    avg_immunisation = mean((hepatitis_b + polio + measles) / 3, na.rm = TRUE)
-  ) %>%
-  mutate(
-    corr_immunisation_infant_mortality = cor(avg_immunisation, avg_infant_mortality, use = "complete.obs"),
-    corr_immunisation_under_five_mortality = cor(avg_immunisation, avg_under_five_mortality, use = "complete.obs")
-  )
-
-# Q4: How do schooling levels and disease mortality rates (e.g., malaria, tuberculosis, and diarrheal diseases) collectively influence life expectancy in developing and developed nations?
-q4_data <- merged_data %>%
-  group_by(status, country) %>% # Group by development status and country
-  summarise(
-    avg_life_exp = mean(life_expectancy, na.rm = TRUE),
-    avg_schooling = mean(schooling, na.rm = TRUE),
-    avg_malaria_deaths = mean(malaria, na.rm = TRUE),
-    avg_tb_deaths = mean(tuberculosis, na.rm = TRUE),
-    avg_diarrheal_deaths = mean(diarrheal_diseases, na.rm = TRUE)
-  ) %>%
-  mutate(
-    corr_schooling_life_exp = cor(avg_schooling, avg_life_exp, use = "complete.obs"),
-    corr_schooling_disease_mortality = cor(avg_schooling, avg_malaria_deaths + avg_tb_deaths + avg_diarrheal_deaths, use = "complete.obs")
-  )
-
-# Q5: How have life expectancy and disease mortality rates changed over time in different countries and regions?
-q5_data <- merged_data %>%
-  group_by(country, year) %>% # Group by country and year
-  summarise(
-    avg_life_exp = mean(life_expectancy, na.rm = TRUE),
-    avg_cardio_deaths = mean(cardiovascular_diseases, na.rm = TRUE),
-    avg_malaria_deaths = mean(malaria, na.rm = TRUE),
-    avg_tb_deaths = mean(tuberculosis, na.rm = TRUE)
-  ) %>%
-  arrange(year) # Sort by year for time-based trends
-
-# Save the cleaned and aggregated datasets for further visualization
-write.csv(merged_data, "cleaned_merged_data.csv", row.names = FALSE)
+# Save the data for visualisation
 write.csv(q1_data, "q1_healthcare_vs_life_expectancy.csv", row.names = FALSE)
-write.csv(q2_data, "q2_disease_impact_by_country.csv", row.names = FALSE)
-write.csv(q3_data, "q3_child_mortality_vs_immunisation.csv", row.names = FALSE)
-write.csv(q4_data, "q4_schooling_disease_mortality.csv", row.names = FALSE)
-write.csv(q5_data, "q5_temporal_trends_life_expectancy.csv", row.names = FALSE)
+
+# Print a sample of the processed data
+head(q1_data)
 
 ```
-
-
