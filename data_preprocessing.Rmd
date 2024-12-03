@@ -6,6 +6,7 @@
 #install.packages("data.table")
 #install.packages("gridExtra")
 #install.packages("janitor")
+#install.packages("stringdist")
 library(ggplot2)
 library(dplyr)
 library(data.table)
@@ -60,86 +61,65 @@ sapply(life_expectancy, class)
 
 message("\nData Types in Cause of Deaths Data:\n")
 sapply(cause_of_deaths, class)
-```
 
-```{r}
-
-########################################################################################################
-# DATA CLEANING, MERGING, AND ANALYSIS
-########################################################################################################
-
-# Clean column names for consistency
-library(dplyr)
-library(janitor)
-
+# Handle missing values in Life Expectancy Data
+# Impute missing numeric values with the mean of the column
 life_expectancy <- life_expectancy %>%
-  clean_names()
-cause_of_deaths <- cause_of_deaths %>%
-  clean_names()
+  mutate(across(where(is.numeric), ~ ifelse(is.na(.), mean(., na.rm = TRUE), .)))
 
-# Filter for overlapping years (2000-2015)
-life_exp_filtered <- life_expectancy %>%
-  filter(year >= 2000 & year <= 2015)
+# Impute missing categorical values with "Unknown"
+life_expectancy <- life_expectancy %>%
+  mutate(across(where(is.character), ~ ifelse(is.na(.), "Unknown", .)))
 
-cause_of_deaths_filtered <- cause_of_deaths %>%
-  filter(year >= 2000 & year <= 2015)
+# Verify that there are no missing values in the Life Expectancy Data
+message("\nMissing Values in Life Expectancy Data After Imputation:\n")
+sapply(life_expectancy, function(x) sum(is.na(x)))
 
-# Subset and clean relevant columns
-life_exp_clean <- life_exp_filtered %>%
-  select(country, year, status, life_expectancy, adult_mortality, 
-         percentage_expenditure, hepatitis_b, polio, measles, 
-         infant_deaths, under_five_deaths, hiv_aids, schooling, 
-         population, alcohol, gdp)
+# Re-check structure and summary after handling missing values
+message("\nStructure of Life Expectancy Data After Imputation:\n")
+str(life_expectancy)
 
-cause_of_deaths_clean <- cause_of_deaths_filtered %>%
-  select(country_territory, year, cardiovascular_diseases, neonatal_disorders, 
-         hiv_aids, malaria, tuberculosis, diarrheal_diseases, lower_respiratory_infections) %>%
-  rename(country = country_territory)
+message("\nSummary of Life Expectancy Data After Imputation:\n")
+summary(life_expectancy)
 
-# Merge datasets by matching country and year
-merged_data <- life_exp_clean %>%
-  inner_join(cause_of_deaths_clean, by = c("country", "year")) %>%
-  rename(hiv_aids_life_exp = hiv_aids.x,
-         hiv_aids_cause_deaths = hiv_aids.y)
+# Count the number of "Unknown" values in each column
+unknown_counts <- sapply(life_expectancy, function(x) sum(x == "Unknown"))
+message("\nCount of 'Unknown' Values in Life Expectancy Data After Imputation:\n")
+print(unknown_counts)
 
-# Handle missing values in merged data
-merged_data <- merged_data %>%
-  mutate(
-    healthcare_per_capita = percentage_expenditure / life_expectancy,
-    hiv_aids_life_exp = ifelse(is.na(hiv_aids_life_exp), 0, hiv_aids_life_exp),
-    hiv_aids_cause_deaths = ifelse(is.na(hiv_aids_cause_deaths), 0, hiv_aids_cause_deaths)
-  )
-
-# Save the merged dataset for later use
-write.csv(merged_data, "cleaned_merged_data.csv", row.names = FALSE)
 
 ```
-
 ```{r}
 ########################################################################################################
-# DATA ANALYSIS FOR QUESTIONS
-########################################################################################################
-# Q1: Life Expectancy and Healthcare Expenditure
+# CHECK COUNTRY NAME MISMATCHES WITH CLEANING
 ########################################################################################################
 
-# Summarise data by country and development status
-q1_data <- merged_data %>%
-  group_by(country, status) %>%
-  summarise(
-    avg_life_exp = mean(life_expectancy, na.rm = TRUE),  # Average life expectancy
-    avg_health_exp = mean(percentage_expenditure, na.rm = TRUE),  # Average healthcare expenditure
-    corr_health_exp_life_exp = ifelse(
-      var(percentage_expenditure) == 0 | var(life_expectancy) == 0, 
-      NA,  # Avoid calculation when variance is zero
-      cor(percentage_expenditure, life_expectancy, use = "complete.obs")  # Correlation
-    )
-  ) %>%
-  arrange(desc(avg_life_exp))  # Arrange by descending life expectancy for readability
+# Clean column names and trim whitespace
+library(janitor)
+life_expectancy <- life_expectancy %>% clean_names()
+cause_of_deaths <- cause_of_deaths %>% clean_names()
 
-# Save the data for visualisation
-write.csv(q1_data, "q1_healthcare_vs_life_expectancy.csv", row.names = FALSE)
+# Extract unique country names
+life_expectancy_countries <- unique(trimws(life_expectancy$country))
+cause_of_deaths_countries <- unique(trimws(cause_of_deaths$country_territory))
 
-# Print a sample of the processed data
-head(q1_data)
+# Standardize names (lowercase for comparison)
+life_expectancy_countries <- tolower(life_expectancy_countries)
+cause_of_deaths_countries <- tolower(cause_of_deaths_countries)
 
+# Find matched and unmatched countries
+matched_countries <- intersect(life_expectancy_countries, cause_of_deaths_countries)
+unmatched_life_expectancy <- setdiff(life_expectancy_countries, matched_countries)
+unmatched_cause_of_deaths <- setdiff(cause_of_deaths_countries, matched_countries)
+
+# Output results
+message("Number of Matched Countries: ", length(matched_countries))
+message("Number of Unmatched Countries in Life Expectancy Data: ", length(unmatched_life_expectancy))
+message("Number of Unmatched Countries in Cause of Deaths Data: ", length(unmatched_cause_of_deaths))
+
+message("\nExamples of Unmatched Countries in Life Expectancy Data:\n", 
+        paste(head(unmatched_life_expectancy, 40), collapse = ", "))
+
+message("\nExamples of Unmatched Countries in Cause of Deaths Data:\n", 
+        paste(head(unmatched_cause_of_deaths, 40), collapse = ", "))
 ```
