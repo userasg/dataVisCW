@@ -26,8 +26,6 @@ cause_of_deaths <- read.csv(cause_of_deaths_path, header = TRUE, sep = ",")
 
 head(life_expectancy)
 head(cause_of_deaths)
-
-
 ```
 
 ```{r}
@@ -86,9 +84,8 @@ summary(life_expectancy)
 unknown_counts <- sapply(life_expectancy, function(x) sum(x == "Unknown"))
 message("\nCount of 'Unknown' Values in Life Expectancy Data After Imputation:\n")
 print(unknown_counts)
-
-
 ```
+
 ```{r}
 ########################################################################################################
 # CHECK COUNTRY NAME MISMATCHES WITH CLEANING
@@ -122,4 +119,184 @@ message("\nExamples of Unmatched Countries in Life Expectancy Data:\n",
 
 message("\nExamples of Unmatched Countries in Cause of Deaths Data:\n", 
         paste(head(unmatched_cause_of_deaths, 40), collapse = ", "))
+```
+
+```{r}
+########################################################################################################
+# MATCH REMAINING UNMATCHED COUNTRIES AND DISCARD OTHERS
+########################################################################################################
+
+# Create a mapping of unmatched country names in Life Expectancy Data to their counterparts in Cause of Deaths Data
+country_mapping <- list(
+  "bolivia (plurinational state of)" = "bolivia",
+  "brunei darussalam" = "brunei",
+  "côte d'ivoire" = "cote d'ivoire",
+  "cabo verde" = "cape verde",
+  "democratic people's republic of korea" = "north korea",
+  "democratic republic of the congo" = "democratic republic of congo",
+  "iran (islamic republic of)" = "iran",
+  "lao people's democratic republic" = "laos",
+  "micronesia (federated states of)" = "micronesia",
+  "republic of korea" = "south korea",
+  "republic of moldova" = "moldova",
+  "russian federation" = "russia",
+  "swaziland" = "eswatini",
+  "syrian arab republic" = "syria",
+  "the former yugoslav republic of macedonia" = "north macedonia",
+  "timor-leste" = "timor",
+  "united kingdom of great britain and northern ireland" = "united kingdom",
+  "united republic of tanzania" = "tanzania",
+  "united states of america" = "united states",
+  "venezuela (bolivarian republic of)" = "venezuela",
+  "viet nam" = "vietnam"
+)
+
+# Standardize names in both datasets to lowercase for comparison
+life_expectancy$country <- tolower(trimws(life_expectancy$country))
+cause_of_deaths$country_territory <- tolower(trimws(cause_of_deaths$country_territory))
+
+# Apply the mapping to unify country names in the Cause of Deaths Data
+cause_of_deaths$country_territory <- sapply(cause_of_deaths$country_territory, function(x) {
+  if (x %in% unlist(country_mapping)) {
+    names(country_mapping)[which(unlist(country_mapping) == x)]
+  } else {
+    x
+  }
+})
+
+# Filter the Cause of Deaths Data to retain only rows with matched countries
+matched_countries_final <- intersect(life_expectancy$country, cause_of_deaths$country_territory)
+cause_of_deaths_filtered <- cause_of_deaths %>%
+  filter(country_territory %in% matched_countries_final)
+
+# Verify results
+message("Number of Countries Retained in Cause of Deaths Data After Filtering: ", nrow(cause_of_deaths_filtered))
+
+# Output a sample of filtered data
+head(cause_of_deaths_filtered)
+```
+
+```{r}
+########################################################################################################
+# MERGE DATASETS WITH MATCHED COUNTRY NAMES AND REMOVE SMALL COUNTRIES
+########################################################################################################
+
+# Ensure country names in both datasets are consistent and prepare for merging
+life_expectancy$country <- tolower(trimws(life_expectancy$country))
+cause_of_deaths_filtered$country_territory <- tolower(trimws(cause_of_deaths_filtered$country_territory))
+
+# Rename columns for consistency before merging
+colnames(cause_of_deaths_filtered)[colnames(cause_of_deaths_filtered) == "country_territory"] <- "country"
+
+# Remove Cook Islands and Niue from both datasets
+excluded_countries <- c("cook islands", "niue", "dominica", "marshall islands", "monaco", 
+                        "nauru", "palau", "saint kitts and nevis", "san marino", "tuvalu")
+life_expectancy <- life_expectancy[!life_expectancy$country %in% excluded_countries, ]
+cause_of_deaths_filtered <- cause_of_deaths_filtered[!cause_of_deaths_filtered$country %in% excluded_countries, ]
+
+# Merge datasets on "country" and "year"
+merged_data <- merge(
+  life_expectancy,
+  cause_of_deaths_filtered,
+  by = c("country", "year"),
+  all = FALSE # Ensures only matched rows with both country and year are retained
+)
+
+# Verify the total number of unique countries in the merged dataset
+unique_countries <- length(unique(merged_data$country))
+message("Number of Unique Countries in Merged Dataset: ", unique_countries)
+
+# Output a sample of the merged dataset
+head(merged_data)
+
+```
+
+```{r}
+########################################################################################################
+# VERIFY UNIQUE COUNTRY COUNT PER YEAR IN MERGED DATASET
+########################################################################################################
+
+# Count the unique countries per year
+unique_countries_per_year <- merged_data %>%
+  group_by(year) %>%
+  summarise(unique_countries_count = n_distinct(country))
+
+# Output the count of unique countries per year
+message("Number of Unique Countries Per Year in the Merged Dataset:\n")
+print(unique_countries_per_year)
+
+# Identify years with missing countries
+all_years <- seq(min(merged_data$year), max(merged_data$year)) # Expected years in the dataset
+missing_years <- setdiff(all_years, unique(unique_countries_per_year$year))
+if (length(missing_years) > 0) {
+  message("\nMissing Years with No Data:\n", paste(missing_years, collapse = ", "))
+} else {
+  message("\nNo Missing Years in the Dataset.")
+}
+
+# Check for missing countries across years
+expected_countries <- unique(merged_data$country)
+missing_countries_by_year <- merged_data %>%
+  group_by(year) %>%
+  summarise(
+    missing_countries = list(setdiff(expected_countries, country))
+  ) %>%
+  filter(lengths(missing_countries) > 0)
+
+# Output missing countries per year, if any
+if (nrow(missing_countries_by_year) > 0) {
+  message("\nMissing Countries by Year:\n")
+  print(missing_countries_by_year)
+} else {
+  message("\nNo Missing Countries Across Years.")
+}
+```
+
+```{r}
+########################################################################################################
+# FIX POPULATION-BASED METRICS IN MERGED DATASET
+########################################################################################################
+
+# Drop the `hiv_aids.x` column, retaining `hiv_aids.y` as the main HIV/AIDS metric
+merged_data <- merged_data %>%
+  select(-hiv_aids.x)
+
+merged_data <- merged_data %>%
+  rename(hiv_aids = hiv_aids.y)
+
+# Convert percentage-based metrics to absolute values using population
+merged_data <- merged_data %>%
+  mutate(
+    measles_abs = (measles / 1000) * population, # Convert measles cases per 1000 to absolute numbers
+    infant_deaths_abs = (infant_deaths / 1000) * population, # Convert infant deaths per 1000 to absolute numbers
+    under_five_deaths_abs = (under_five_deaths / 1000) * population, # Convert under-five deaths per 1000 to absolute numbers
+    hepatitis_b_abs = (hepatitis_b / 100) * population, # Convert Hepatitis B immunization percentage to absolute numbers
+    polio_abs = (polio / 100) * population, # Convert Polio immunization percentage to absolute numbers
+    diphtheria_abs = (diphtheria / 100) * population, # Convert Diphtheria immunization percentage to absolute numbers
+    thinness_1_19_abs = (thinness_1_19_years / 100) * population, # Convert thinness 1-19 years prevalence to absolute numbers
+    thinness_5_9_abs = (thinness_5_9_years / 100) * population # Convert thinness 5-9 years prevalence to absolute numbers
+  ) %>%
+  select(
+    -measles, -infant_deaths, -under_five_deaths, 
+    -hepatitis_b, -polio, -diphtheria, -thinness_1_19_years, -thinness_5_9_years # Drop original percentage-based columns
+  )
+
+# Verify and clean up the dataset
+message("Verifying structure after fixes...")
+str(merged_data)
+head(merged_data)
+
+```
+```{r}
+########################################################################################################
+# VERIFY FINAL UNIQUE COUNTRY COUNT AND SAVE TO CSV
+########################################################################################################
+
+# Verify the total number of unique countries in the dataset
+unique_countries <- length(unique(merged_data$country))
+message("Number of Unique Countries in Fixed Dataset: ", unique_countries)
+
+# Save the fixed merged dataset to CSV
+write.csv(merged_data, "merged_life_expectancy_cause_of_deaths.csv", row.names = FALSE)
+message("Fixed merged dataset saved as 'merged_life_expectancy_cause_of_deaths.csv'")
 ```
